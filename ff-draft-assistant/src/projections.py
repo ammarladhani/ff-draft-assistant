@@ -211,28 +211,11 @@ class ESPNProjectionSource(ProjectionSource):
         pd.DataFrame(rows).to_csv(csv_path, index=False)
         return len(players)
 
-    def _parse_players(self, payload) -> List[Player]:
-        """Parse either ESPN response shape: a player list or ``{"players": ...}``.
-
-        ESPN has returned both shapes from this endpoint.  Be deliberately
-        defensive here: an unexpected provider record must be skipped rather
-        than turning a recoverable live-load failure into an AttributeError.
-        """
-        if isinstance(payload, list):
-            entries = payload
-        elif isinstance(payload, dict):
-            entries = payload.get("players", [])
-        else:
-            return []
-        if not isinstance(entries, list):
-            return []
+    def _parse_players(self, payload: dict) -> List[Player]:
+        entries = payload.get("players", [])
         result = []
         for entry in entries:
-            if not isinstance(entry, dict):
-                continue
             meta = entry.get("player", entry)
-            if not isinstance(meta, dict):
-                continue
             position = ESPN_POSITION_IDS.get(meta.get("defaultPositionId"))
             name = meta.get("fullName") or meta.get("name")
             if not name or not position:
@@ -257,12 +240,7 @@ class ESPNProjectionSource(ProjectionSource):
         # weekly projections when they are included in the response.
         weekly = {}
         season_total = None
-        stats = entry.get("stats", [])
-        if not isinstance(stats, list):
-            return {}
-        for stat in stats:
-            if not isinstance(stat, dict):
-                continue
+        for stat in entry.get("stats", []):
             if stat.get("statSourceId") not in (None, 1):
                 continue
             value = stat.get("appliedTotal", stat.get("projectedTotal"))
@@ -288,9 +266,7 @@ class ESPNProjectionSource(ProjectionSource):
         for key in ("draftRanksByRankType", "ratings"):
             ratings = entry.get(key, {})
             if isinstance(ratings, dict):
-                ratings = ratings.values()
-            if isinstance(ratings, list):
-                for rating in ratings:
+                for rating in ratings.values():
                     if isinstance(rating, dict) and rating.get("rank") is not None:
                         return float(rating["rank"])
         return None

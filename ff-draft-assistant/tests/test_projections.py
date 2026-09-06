@@ -25,21 +25,6 @@ class FakeSession:
 
 
 class ESPNProjectionSourceTests(unittest.TestCase):
-    def test_accepts_espn_top_level_player_list(self):
-        source = ESPNProjectionSource(season=2026, weeks=[1])
-        players = source._parse_players(
-            [
-                {
-                    "player": {"fullName": "List WR", "defaultPositionId": 3},
-                    "stats": [{"statSourceId": 1, "scoringPeriodId": 1, "appliedTotal": 12}],
-                    "ratings": [{"rank": 42}],
-                }
-            ]
-        )
-        self.assertEqual(len(players), 1)
-        self.assertEqual(players[0].name, "List WR")
-        self.assertEqual(players[0].adp, 42.0)
-
     def test_uses_weekly_projected_stats_when_available(self):
         source = ESPNProjectionSource(season=2026, weeks=[1, 2])
         players = source._parse_players(
