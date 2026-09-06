@@ -39,7 +39,25 @@ ESPN_PLAYERS_URL = (
     "seasons/{season}/segments/0/leaguedefaults/3?scoringPeriodId=0&view=kona_player_info"
 )
 CACHE_MAX_AGE_SECONDS = 60 * 60  # 1 hour -- plenty fresh for a single draft night
-ESPN_POSITION_IDS = {1: "QB", 2: "RB", 3: "WR", 4: "TE", 16: "DST", 17: "K"}
+# ESPN's player ``defaultPositionId`` values use the same identifiers as the
+# corresponding roster slots for IDP, defense/special teams, and kickers.
+# ``filterSlotIds`` below uses roster-slot IDs (QB is slot 0, while its player
+# default position is 1), so keep the two concepts separate.
+ESPN_POSITION_IDS = {
+    1: "QB",
+    2: "RB",
+    3: "WR",
+    4: "TE",
+    8: "DT",
+    9: "DE",
+    10: "LB",
+    12: "CB",
+    13: "S",
+    16: "DST",
+    17: "K",
+    18: "P",
+}
+ESPN_FILTER_SLOT_IDS = (0, 2, 4, 6, 8, 9, 10, 12, 13, 16, 17, 18)
 
 
 @dataclass
@@ -187,7 +205,10 @@ class ESPNProjectionSource(ProjectionSource):
                 "x-fantasy-filter": json.dumps(
                     {
                         "players": {
-                            "filterSlotIds": {"value": [0, 2, 4, 6, 16, 17]},
+                            # Request offensive, IDP, defense/special teams,
+                            # kicker, and punter projections. The CSV writer
+                            # preserves the canonical position codes above.
+                            "filterSlotIds": {"value": list(ESPN_FILTER_SLOT_IDS)},
                             "limit": 2000,
                             "offset": 0,
                             "sortDraftRanks": {
