@@ -37,8 +37,13 @@ class ESPNProjectionSourceTests(unittest.TestCase):
             {
                 "players": [
                     {
-                        "player": {"fullName": "Jane QB", "defaultPositionId": 1},
-                        "stats": [{"statSourceId": 1, "scoringPeriodId": 0, "appliedTotal": 170}],
+                        "player": {
+                            "fullName": "Jane QB",
+                            "defaultPositionId": 1,
+                            "stats": [
+                                {"statSourceId": 1, "statSplitTypeId": 0, "scoringPeriodId": 0, "appliedTotal": 170}
+                            ],
+                        },
                     }
                 ]
             }
@@ -46,9 +51,9 @@ class ESPNProjectionSourceTests(unittest.TestCase):
         players = ESPNProjectionSource(2026, weeks=[1, 2], session=session).load()
 
         self.assertEqual(len(players), 1)
-        self.assertIn("/seasons/2026/segments/0/leagues/0?view=kona_player_info", session.url)
+        self.assertIn("/seasons/2026/segments/0/leaguedefaults/3?scoringPeriodId=0&view=kona_player_info", session.url)
         filter_payload = session.kwargs["headers"]["x-fantasy-filter"]
-        self.assertIn("FREEAGENT", filter_payload)
+        self.assertIn("sortDraftRanks", filter_payload)
 
     def test_parses_list_shaped_response(self):
         source = ESPNProjectionSource(season=2026, weeks=[1])

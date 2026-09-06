@@ -36,7 +36,7 @@ import pandas as pd
 SLEEPER_PLAYERS_URL = "https://api.sleeper.app/v1/players/nfl"
 ESPN_PLAYERS_URL = (
     "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/"
-    "seasons/{season}/segments/0/leagues/0?view=kona_player_info"
+    "seasons/{season}/segments/0/leaguedefaults/3?scoringPeriodId=0&view=kona_player_info"
 )
 CACHE_MAX_AGE_SECONDS = 60 * 60  # 1 hour -- plenty fresh for a single draft night
 ESPN_POSITION_IDS = {1: "QB", 2: "RB", 3: "WR", 4: "TE", 16: "DST", 17: "K"}
@@ -181,17 +181,21 @@ class ESPNProjectionSource(ProjectionSource):
             timeout=20,
             headers={
                 "User-Agent": "FantasyDraftAssistant/1.0",
-                # ``kona_player_info`` supplies projected stat totals. The
-                # public league (0) has no roster, so free agents/waivers are
-                # the draftable player pool. ESPN otherwise returns only a
-                # small, popularity-sorted page.
+                # ESPN otherwise returns only a small, popularity-sorted
+                # page. ``leaguedefaults/3`` is ESPN's public PPR scoring
+                # configuration and does not require league credentials.
                 "x-fantasy-filter": json.dumps(
                     {
                         "players": {
-                            "filterStatus": {"value": ["FREEAGENT", "WAIVERS"]},
                             "filterSlotIds": {"value": [0, 2, 4, 6, 16, 17]},
                             "limit": 2000,
                             "offset": 0,
+                            "sortDraftRanks": {
+                                "sortPriority": 2,
+                                "sortAsc": True,
+                                "value": "PPR",
+                            },
+                            "sortPercOwned": {"sortPriority": 4, "sortAsc": False},
                         }
                     }
                 ),
@@ -251,7 +255,7 @@ class ESPNProjectionSource(ProjectionSource):
             name = meta.get("fullName") or meta.get("name")
             if not name or not position:
                 continue
-            weekly = self._weekly_points(entry)
+            weekly = self._weekly_points(meta, fallback_entry=entry)
             if not weekly:
                 continue
             result.append(
@@ -266,18 +270,24 @@ class ESPNProjectionSource(ProjectionSource):
             )
         return result
 
-    def _weekly_points(self, entry: dict) -> Dict[int, float]:
+    def _weekly_points(self, player: dict, fallback_entry: Optional[dict] = None) -> Dict[int, float]:
         # A statSourceId of 1 is ESPN's projected-stat feed. Prefer genuine
-        # weekly projections when they are included in the response.
+        # weekly projections when they are included in the response. The
+        # ``kona_player_info`` view puts stats under ``entry["player"]``;
+        # retain support for older responses that put them on the wrapper.
         weekly = {}
         season_total = None
-        stats = entry.get("stats", [])
+        stats = player.get("stats")
+        if not isinstance(stats, list) and fallback_entry is not None:
+            stats = fallback_entry.get("stats", [])
         if not isinstance(stats, list):
             return {}
         for stat in stats:
             if not isinstance(stat, dict):
                 continue
             if stat.get("statSourceId") not in (None, 1):
+                continue
+            if stat.get("statSplitTypeId", 0) != 0:
                 continue
             value = stat.get("appliedTotal", stat.get("projectedTotal"))
             if value is None:
