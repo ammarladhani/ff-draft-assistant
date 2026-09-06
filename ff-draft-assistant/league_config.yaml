@@ -1,120 +1,111 @@
 league:
-  num_teams: 10
+  num_teams: 12
   roster: {QB: 1, RB: 2, WR: 2, TE: 1, FLEX: 1, DST: 1, K: 1, BENCH: 7}
-  season_weeks: 17
-  playoff_weeks: [15, 16, 17]
+  season_weeks: 13
+  playoff_weeks: []
 teams:
-- {name: Team 1, draft_slot: 1, is_me: false}
-- {name: Team 2, draft_slot: 2, is_me: false}
-- {name: My Team, draft_slot: 3, is_me: true}
-- {name: Team 4, draft_slot: 4, is_me: false}
-- {name: Team 5, draft_slot: 5, is_me: false}
-- {name: Team 6, draft_slot: 6, is_me: false}
-- {name: Team 7, draft_slot: 7, is_me: false}
-- {name: Team 8, draft_slot: 8, is_me: false}
-- {name: Team 9, draft_slot: 9, is_me: false}
-- {name: Team 10, draft_slot: 10, is_me: false}
+- {name: Mafia, draft_slot: 1, is_me: false}
+- {name: Alizeh, draft_slot: 2, is_me: false}
+- {name: Justin, draft_slot: 3, is_me: false}
+- {name: Srajat, draft_slot: 4, is_me: false}
+- {name: Josh, draft_slot: 5, is_me: false}
+- {name: Tampa, draft_slot: 6, is_me: false}
+- {name: Flint, draft_slot: 7, is_me: false}
+- {name: Adrian, draft_slot: 8, is_me: false}
+- {name: Ammar, draft_slot: 9, is_me: true}
+- {name: Jonathin, draft_slot: 10, is_me: false}
+- {name: Touchdown, draft_slot: 11, is_me: false}
+- {name: He, draft_slot: 12, is_me: false}
 schedule:
   1:
-  - [Team 1, Team 10]
-  - [Team 2, Team 9]
-  - [My Team, Team 8]
-  - [Team 4, Team 7]
-  - [Team 5, Team 6]
+  - [Ammar, Josh]
+  - [Mafia, He]
+  - [Alizeh, Jonathin]
+  - [Justin, Tampa]
+  - [Srajat, Touchdown]
+  - [Flint, Adrian]
   2:
-  - [Team 1, Team 9]
-  - [Team 10, Team 8]
-  - [Team 2, Team 7]
-  - [My Team, Team 6]
-  - [Team 4, Team 5]
+  - [Ammar, Srajat]
+  - [Mafia, Josh]
+  - [Alizeh, Touchdown]
+  - [Justin, Adrian]
+  - [Tampa, Jonathin]
+  - [Flint, He]
   3:
-  - [Team 1, Team 8]
-  - [Team 9, Team 7]
-  - [Team 10, Team 6]
-  - [Team 2, Team 5]
-  - [My Team, Team 4]
+  - [Ammar, Alizeh]
+  - [Mafia, Srajat]
+  - [Justin, He]
+  - [Josh, Flint]
+  - [Tampa, Adrian]
+  - [Jonathin, Touchdown]
   4:
-  - [Team 1, Team 7]
-  - [Team 8, Team 6]
-  - [Team 9, Team 5]
-  - [Team 10, Team 4]
-  - [Team 2, My Team]
+  - [Ammar, Touchdown]
+  - [Mafia, Alizeh]
+  - [Justin, Josh]
+  - [Srajat, Flint]
+  - [Tampa, He]
+  - [Adrian, Jonathin]
   5:
-  - [Team 1, Team 6]
-  - [Team 7, Team 5]
-  - [Team 8, Team 4]
-  - [Team 9, My Team]
-  - [Team 10, Team 2]
+  - [Ammar, Jonathin]
+  - [Mafia, Touchdown]
+  - [Alizeh, Flint]
+  - [Justin, Srajat]
+  - [Josh, Tampa]
+  - [Adrian, He]
   6:
-  - [Team 1, Team 5]
-  - [Team 6, Team 4]
-  - [Team 7, My Team]
-  - [Team 8, Team 2]
-  - [Team 9, Team 10]
+  - [Ammar, Mafia]
+  - [Alizeh, Justin]
+  - [Srajat, Tampa]
+  - [Josh, Adrian]
+  - [Flint, Touchdown]
+  - [Jonathin, He]
   7:
-  - [Team 1, Team 4]
-  - [Team 5, My Team]
-  - [Team 6, Team 2]
-  - [Team 7, Team 10]
-  - [Team 8, Team 9]
+  - [Ammar, Flint]
+  - [Mafia, Jonathin]
+  - [Alizeh, Tampa]
+  - [Justin, Touchdown]
+  - [Srajat, Adrian]
+  - [Josh, He]
   8:
-  - [Team 1, My Team]
-  - [Team 4, Team 2]
-  - [Team 5, Team 10]
-  - [Team 6, Team 9]
-  - [Team 7, Team 8]
+  - [Ammar, Justin]
+  - [Mafia, Flint]
+  - [Alizeh, Adrian]
+  - [Srajat, He]
+  - [Josh, Jonathin]
+  - [Tampa, Touchdown]
   9:
-  - [Team 1, Team 2]
-  - [My Team, Team 10]
-  - [Team 4, Team 9]
-  - [Team 5, Team 8]
-  - [Team 6, Team 7]
+  - [Ammar, Tampa]
+  - [Mafia, Justin]
+  - [Alizeh, He]
+  - [Srajat, Josh]
+  - [Flint, Jonathin]
+  - [Adrian, Touchdown]
   10:
-  - [Team 10, Team 1]
-  - [Team 9, Team 2]
-  - [Team 8, My Team]
-  - [Team 7, Team 4]
-  - [Team 6, Team 5]
+  - [Ammar, Adrian]
+  - [Mafia, Tampa]
+  - [Alizeh, Josh]
+  - [Justin, Flint]
+  - [Srajat, Jonathin]
+  - [Touchdown, He]
   11:
-  - [Team 9, Team 1]
-  - [Team 8, Team 10]
-  - [Team 7, Team 2]
-  - [Team 6, My Team]
-  - [Team 5, Team 4]
+  - [Ammar, He]
+  - [Mafia, Adrian]
+  - [Alizeh, Srajat]
+  - [Justin, Jonathin]
+  - [Josh, Touchdown]
+  - [Tampa, Flint]
   12:
-  - [Team 8, Team 1]
-  - [Team 7, Team 9]
-  - [Team 6, Team 10]
-  - [Team 5, Team 2]
-  - [Team 4, My Team]
+  - [Ammar, Josh]
+  - [Mafia, He]
+  - [Alizeh, Jonathin]
+  - [Justin, Tampa]
+  - [Srajat, Touchdown]
+  - [Flint, Adrian]
   13:
-  - [Team 7, Team 1]
-  - [Team 6, Team 8]
-  - [Team 5, Team 9]
-  - [Team 4, Team 10]
-  - [My Team, Team 2]
-  14:
-  - [Team 6, Team 1]
-  - [Team 5, Team 7]
-  - [Team 4, Team 8]
-  - [My Team, Team 9]
-  - [Team 2, Team 10]
-  15:
-  - [Team 5, Team 1]
-  - [Team 4, Team 6]
-  - [My Team, Team 7]
-  - [Team 2, Team 8]
-  - [Team 10, Team 9]
-  16:
-  - [Team 4, Team 1]
-  - [My Team, Team 5]
-  - [Team 2, Team 6]
-  - [Team 10, Team 7]
-  - [Team 9, Team 8]
-  17:
-  - [My Team, Team 1]
-  - [Team 2, Team 4]
-  - [Team 10, Team 5]
-  - [Team 9, Team 6]
-  - [Team 8, Team 7]
+  - [Ammar, Srajat]
+  - [Mafia, Josh]
+  - [Alizeh, Touchdown]
+  - [Justin, Adrian]
+  - [Tampa, Jonathin]
+  - [Flint, He]
 draft: {type: snake, rounds: 16}
