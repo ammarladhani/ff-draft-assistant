@@ -25,6 +25,24 @@ class FakeSession:
 
 
 class ESPNProjectionSourceTests(unittest.TestCase):
+    def test_parses_list_shaped_response(self):
+        source = ESPNProjectionSource(season=2026, weeks=[1])
+        players = source._parse_players(
+            [
+                {
+                    "player": {"fullName": "Jane QB", "defaultPositionId": 1},
+                    "stats": [{"statSourceId": 1, "scoringPeriodId": 1, "appliedTotal": 21.5}],
+                }
+            ]
+        )
+        self.assertEqual(len(players), 1)
+        self.assertEqual(players[0].name, "Jane QB")
+        self.assertEqual(players[0].weekly_projections, {1: 21.5})
+
+    def test_skips_malformed_list_entries(self):
+        source = ESPNProjectionSource(season=2026)
+        self.assertEqual(source._parse_players(["invalid", {"player": []}]), [])
+
     def test_uses_weekly_projected_stats_when_available(self):
         source = ESPNProjectionSource(season=2026, weeks=[1, 2])
         players = source._parse_players(
