@@ -63,7 +63,8 @@ def compute_replacement_levels(
     player ranked just outside league-wide starting lineups at that
     position, given the CURRENT undrafted pool.
 
-    Demand for a dedicated slot (QB/RB/WR/TE/DST/K) = num_teams * starters[pos].
+    Demand for any configured dedicated slot (including IDP and punter slots)
+    = num_teams * starters[pos].
     FLEX demand is split evenly across the three flex-eligible positions
     (RB/WR/TE) -- a simplifying assumption (real flex usage skews toward
     whichever position is deepest at the margin), but it's a reasonable,

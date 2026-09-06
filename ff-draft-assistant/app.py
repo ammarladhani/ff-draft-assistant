@@ -190,8 +190,10 @@ st.markdown("### Available players")
 
 f1, f2, f3 = st.columns([1, 2, 1])
 with f1:
+    configured_or_available_positions = set(roster_config.starters)
+    configured_or_available_positions.update(p.position for p in state.available.values())
     position_filter = st.selectbox(
-        "Position", ["All", "QB", "RB", "WR", "TE", "DST", "K"], key="pos_filter"
+        "Position", ["All", *sorted(configured_or_available_positions)], key="pos_filter"
     )
 with f2:
     name_search = st.text_input("Search by name", key="name_search")

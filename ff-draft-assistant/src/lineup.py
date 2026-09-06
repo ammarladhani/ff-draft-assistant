@@ -6,8 +6,9 @@ should start and which should sit, to maximize that week's total
 projected points.
 
 This is intentionally a greedy assignment, not a real optimizer (LP/ILP):
-  1. Fill each dedicated position slot (QB, RB, WR, TE, DST, K) with the
-     best remaining player(s) at that position.
+  1. Fill every configured dedicated position slot (including IDP positions
+     such as DT, DE, LB, CB, and S) with the best remaining player(s) at
+     that position.
   2. Fill FLEX with the single best remaining RB/WR/TE.
   3. Everyone else left on the roster is bench.
 

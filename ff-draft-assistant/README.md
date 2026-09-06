@@ -23,7 +23,12 @@ The app is immediately demoable with the sample data — no real projections nee
    settings, and season schedule. The loader validates it thoroughly
    (missing fields, roster/bench math that doesn't add up, unknown team
    names in the schedule, etc.) and reports every problem it finds at
-   once.
+   once. Roster keys support `QB`, `RB`, `WR`, `TE`, `FLEX`, `DST`, `K`,
+   `P`, `DT`, `DE`, `LB`, `CB`, `S`, and `BENCH`. For example, an IDP
+   league can use `{QB: 1, RB: 2, WR: 2, TE: 1, FLEX: 1, DT: 1, DE: 1,
+   LB: 1, CB: 1, S: 1, K: 1, P: 1, BENCH: 7}`; its draft must have 21
+   rounds. Supply IDP and punter projections in your CSV using those same
+   position codes.
 2. **Fetch ESPN projections into CSV** from the sidebar to replace
    `data/projections.csv` automatically. The loader uses ESPN's public
    fantasy-player feed for projected points and Sleeper's public catalogue

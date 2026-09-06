@@ -21,8 +21,12 @@ FLEX_ELIGIBLE = ("RB", "WR", "TE")
 
 # The set of roster keys we understand. BENCH is capacity, not a starting
 # position, and FLEX is a multi-position slot -- both are handled specially
-# wherever we iterate over "positions".
-KNOWN_ROSTER_KEYS = ("QB", "RB", "WR", "TE", "FLEX", "DST", "K", "BENCH")
+# wherever we iterate over "positions". IDP leagues commonly use the
+# position-specific DT, DE, LB, CB, and S slots, plus a P slot for punters.
+KNOWN_ROSTER_KEYS = (
+    "QB", "RB", "WR", "TE", "FLEX", "DST", "K", "P",
+    "DT", "DE", "LB", "CB", "S", "BENCH",
+)
 
 
 class ConfigError(Exception):
@@ -42,7 +46,8 @@ class ConfigError(Exception):
 
 @dataclass
 class RosterConfig:
-    starters: Dict[str, int]  # e.g. {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "DST": 1, "K": 1}
+    # e.g. {"QB": 1, "RB": 2, "WR": 2, "TE": 1, "DT": 1, "LB": 1, "K": 1}
+    starters: Dict[str, int]
     flex: int
     bench: int
 
