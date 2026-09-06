@@ -36,10 +36,20 @@ import pandas as pd
 SLEEPER_PLAYERS_URL = "https://api.sleeper.app/v1/players/nfl"
 ESPN_PLAYERS_URL = (
     "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/"
-    "seasons/{season}/segments/0/leaguedefaults/3?scoringPeriodId=0&view=kona_player_info"
+    "seasons/{season}/segments/0/leagues/{league_id}"
+)
+ESPN_PLAYER_CARD_VIEW = "kona_playercard"
+ESPN_PLATFORM_VERSION = "2d26c1207d605a9476197b1a24b8bf8bcf44eb2f"
+ESPN_PRO_TEAM_SCHEDULES_URL = (
+    "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/"
+    "seasons/{season}"
 )
 CACHE_MAX_AGE_SECONDS = 60 * 60  # 1 hour -- plenty fresh for a single draft night
-ESPN_POSITION_IDS = {1: "QB", 2: "RB", 3: "WR", 4: "TE", 16: "DST", 17: "K"}
+ESPN_POSITION_IDS = {
+    1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K",
+    8: "DT", 9: "DE", 10: "LB", 11: "DT", 12: "CB", 13: "S",
+    14: "DB", 15: "DP", 16: "DST", 17: "K", 18: "P",
+}
 
 
 @dataclass
@@ -167,42 +177,97 @@ class ESPNProjectionSource(ProjectionSource):
     ``session`` is injectable so parsing can be tested without network access.
     """
 
-    def __init__(self, season: int, weeks=range(1, 18), session=None):
+    def __init__(
+        self,
+        season: int,
+        league_id: int | str = 2077647142,
+        weeks=range(1, 18),
+        session=None,
+        platform_version: Optional[str] = ESPN_PLATFORM_VERSION,
+        swid: Optional[str] = None,
+        espn_s2: Optional[str] = None,
+    ):
         self.season = season
+        self.league_id = league_id
         self.weeks = list(weeks)
         self._session = session
+        self.platform_version = platform_version
+        # Private leagues require the same two cookies your signed-in ESPN
+        # browser session uses. Environment variables keep them out of source
+        # control and work for both Streamlit and refresh_projections.py.
+        self.swid = swid or os.getenv("ESPN_SWID")
+        self.espn_s2 = espn_s2 or os.getenv("ESPN_S2")
 
     def load(self) -> List[Player]:
         import requests
 
         client = self._session or requests
-        response = client.get(
-            ESPN_PLAYERS_URL.format(season=self.season),
-            timeout=20,
-            headers={
-                "User-Agent": "FantasyDraftAssistant/1.0",
-                # ESPN otherwise returns only a small, popularity-sorted
-                # page. ``leaguedefaults/3`` is ESPN's public PPR scoring
-                # configuration and does not require league credentials.
-                "x-fantasy-filter": json.dumps(
-                    {
-                        "players": {
-                            "filterSlotIds": {"value": [0, 2, 4, 6, 16, 17]},
-                            "limit": 2000,
-                            "offset": 0,
-                            "sortDraftRanks": {
-                                "sortPriority": 2,
-                                "sortAsc": True,
-                                "value": "PPR",
-                            },
-                            "sortPercOwned": {"sortPriority": 4, "sortAsc": False},
-                        }
-                    }
-                ),
-            },
+        bye_by_team = self._load_bye_weeks(client)
+        entries = []
+        # ESPN caps one response at 2,000 players. Punters are commonly
+        # ranked below that first page, so continue until a short page.
+        for offset in range(0, 8000, 2000):
+            response = client.get(
+                ESPN_PLAYERS_URL.format(season=self.season, league_id=self.league_id),
+                timeout=20,
+                params={
+                    "scoringPeriodId": 0,
+                    "view": ESPN_PLAYER_CARD_VIEW,
+                    **({"platformVersion": self.platform_version} if self.platform_version else {}),
+                },
+                cookies=self._auth_cookies(),
+                headers={"User-Agent": "FantasyDraftAssistant/1.0", "x-fantasy-filter": self._player_filter(offset)},
+            )
+            response.raise_for_status()
+            page = response.json().get("players", [])
+            if not isinstance(page, list):
+                break
+            entries.extend(page)
+            if len(page) < 2000:
+                break
+        return self._parse_players({"players": entries}, bye_by_team=bye_by_team)
+
+    @staticmethod
+    def _player_filter(offset: int) -> str:
+        return json.dumps(
+            {
+                "players": {
+                    "filterSlotIds": {"value": list(range(26))},
+                    "limit": 2000,
+                    "offset": offset,
+                    "sortDraftRanks": {"sortPriority": 2, "sortAsc": True, "value": "PPR"},
+                    "sortPercOwned": {"sortPriority": 4, "sortAsc": False},
+                }
+            }
         )
-        response.raise_for_status()
-        return self._parse_players(response.json())
+
+    def _load_bye_weeks(self, client) -> Dict[int, int]:
+        """Return ESPN pro-team ID -> bye week; a failed lookup is non-fatal."""
+        try:
+            response = client.get(
+                ESPN_PRO_TEAM_SCHEDULES_URL.format(season=self.season),
+                timeout=20,
+                params={"view": "proTeamSchedules_wl"},
+                cookies=self._auth_cookies(),
+                headers={"User-Agent": "FantasyDraftAssistant/1.0"},
+            )
+            response.raise_for_status()
+            teams = response.json().get("settings", {}).get("proTeams", [])
+            return {
+                int(team["id"]): int(team["byeWeek"])
+                for team in teams
+                if isinstance(team, dict) and team.get("id") is not None and team.get("byeWeek") is not None
+            }
+        except Exception:  # ESPN's player data remains useful without the bye metadata.
+            return {}
+
+    def _auth_cookies(self) -> Dict[str, str]:
+        """Build ESPN cookies for private leagues; empty is valid for public ones."""
+        return {
+            key: value
+            for key, value in (("SWID", self.swid), ("espn_s2", self.espn_s2))
+            if value
+        }
 
     def write_csv(self, csv_path: str) -> int:
         """Fetch, validate, and replace ``csv_path`` with standard CSV rows."""
@@ -227,7 +292,9 @@ class ESPNProjectionSource(ProjectionSource):
         pd.DataFrame(rows).to_csv(csv_path, index=False)
         return len(players)
 
-    def _parse_players(self, payload: Any) -> List[Player]:
+    def _parse_players(
+        self, payload: Any, bye_by_team: Optional[Dict[int, int]] = None
+    ) -> List[Player]:
         """Parse ESPN's documented and list-shaped player response formats.
 
         ESPN has returned both a ``{"players": [...]}`` object and a bare
@@ -255,7 +322,13 @@ class ESPNProjectionSource(ProjectionSource):
             name = meta.get("fullName") or meta.get("name")
             if not name or not position:
                 continue
-            weekly = self._weekly_points(meta, fallback_entry=entry)
+            bye_week = self._bye_week(meta, fallback_entry=entry)
+            if bye_week is None:
+                try:
+                    bye_week = (bye_by_team or {}).get(int(meta.get("proTeamId")))
+                except (TypeError, ValueError):
+                    pass
+            weekly = self._weekly_points(meta, bye_week, fallback_entry=entry)
             if not weekly:
                 continue
             result.append(
@@ -263,19 +336,20 @@ class ESPNProjectionSource(ProjectionSource):
                     name=name.strip(),
                     position=position,
                     nfl_team=str(meta.get("proTeamAbbrev") or meta.get("proTeamId") or "FA"),
-                    bye_week=None,
+                    bye_week=bye_week,
                     weekly_projections=weekly,
                     adp=self._adp(entry),
                 )
             )
         return result
 
-    def _weekly_points(self, player: dict, fallback_entry: Optional[dict] = None) -> Dict[int, float]:
-        # A statSourceId of 1 is ESPN's projected-stat feed. Prefer genuine
-        # weekly projections when they are included in the response. The
-        # ``kona_player_info`` view puts stats under ``entry["player"]``;
-        # retain support for older responses that put them on the wrapper.
-        weekly = {}
+    def _weekly_points(
+        self,
+        player: dict,
+        bye_week: Optional[int],
+        fallback_entry: Optional[dict] = None,
+    ) -> Dict[int, float]:
+        """Allocate ESPN's period-zero season projection over non-bye weeks."""
         season_total = None
         stats = player.get("stats")
         if not isinstance(stats, list) and fallback_entry is not None:
@@ -292,20 +366,40 @@ class ESPNProjectionSource(ProjectionSource):
             value = stat.get("appliedTotal", stat.get("projectedTotal"))
             if value is None:
                 continue
-            period = int(stat.get("scoringPeriodId", 0))
-            if period in self.weeks:
-                weekly[int(period)] = float(value)
-            elif period == 0:
+            if int(stat.get("scoringPeriodId", 0)) == 0:
                 season_total = float(value)
-        if weekly:
-            return weekly
         if season_total is None or not self.weeks:
             return {}
-        # ESPN commonly supplies a season total only before Week 1. Uniform
-        # allocation is transparent, useful for draft comparison, and avoids
-        # inventing a false week-by-week signal.
-        points = season_total / len(self.weeks)
-        return {week: points for week in self.weeks}
+        playing_weeks = [week for week in self.weeks if week != bye_week]
+        if not playing_weeks:
+            return {}
+        points = season_total / len(playing_weeks)
+        return {week: (0.0 if week == bye_week else points) for week in self.weeks}
+
+    @staticmethod
+    def _bye_week(player: dict, fallback_entry: Optional[dict] = None) -> Optional[int]:
+        """Read a bye from ESPN's player-card response when it is present."""
+        for container in (player, fallback_entry or {}):
+            if not isinstance(container, dict):
+                continue
+            for key in ("byeWeek", "bye_week"):
+                value = container.get(key)
+                if value is not None:
+                    try:
+                        return int(value)
+                    except (TypeError, ValueError):
+                        pass
+            for key in ("proTeam", "team", "schedule"):
+                nested = container.get(key)
+                if isinstance(nested, dict):
+                    for bye_key in ("byeWeek", "bye_week"):
+                        value = nested.get(bye_key)
+                        if value is not None:
+                            try:
+                                return int(value)
+                            except (TypeError, ValueError):
+                                pass
+        return None
 
     @staticmethod
     def _adp(entry: dict) -> Optional[float]:
@@ -333,11 +427,19 @@ class APIProjectionSource(ProjectionSource):
         fallback_csv_path: str,
         cache_path: str = "data/projections_cache.json",
         season: Optional[int] = None,
+        league_id: int | str = 2077647142,
+        weeks=range(1, 18),
         session=None,
+        swid: Optional[str] = None,
+        espn_s2: Optional[str] = None,
     ):
         self.fallback = CSVProjectionSource(fallback_csv_path)
         self.cache_path = cache_path
         self.season = season or time.gmtime().tm_year
+        self.league_id = league_id
+        self.weeks = list(weeks)
+        self.swid = swid
+        self.espn_s2 = espn_s2
         # `session` is injectable for testing; defaults to the `requests`
         # library's module-level functions via a tiny shim below.
         self._session = session
@@ -362,7 +464,12 @@ class APIProjectionSource(ProjectionSource):
 
     def _fetch_live(self) -> List[Player]:
         players = ESPNProjectionSource(
-            season=self.season, session=self._session
+            season=self.season,
+            league_id=self.league_id,
+            weeks=self.weeks,
+            session=self._session,
+            swid=self.swid,
+            espn_s2=self.espn_s2,
         ).load()
         if not players:
             raise RuntimeError("ESPN returned no usable fantasy projections.")
@@ -399,6 +506,12 @@ class APIProjectionSource(ProjectionSource):
                 payload = json.load(f)
             if time.time() - payload.get("fetched_at", 0) > CACHE_MAX_AGE_SECONDS:
                 return None
+            if (
+                payload.get("season") != self.season
+                or str(payload.get("league_id")) != str(self.league_id)
+                or payload.get("weeks") != self.weeks
+            ):
+                return None
             return [Player.from_dict(p) for p in payload.get("players", [])]
         except Exception:
             return None
@@ -407,6 +520,9 @@ class APIProjectionSource(ProjectionSource):
         os.makedirs(os.path.dirname(self.cache_path) or ".", exist_ok=True)
         payload = {
             "fetched_at": time.time(),
+            "season": self.season,
+            "league_id": self.league_id,
+            "weeks": self.weeks,
             "players": [p.to_dict() for p in players],
         }
         with open(self.cache_path, "w") as f:

@@ -30,11 +30,11 @@ The app is immediately demoable with the sample data — no real projections nee
    rounds. Supply IDP and punter projections in your CSV using those same
    position codes.
 2. **Fetch ESPN projections into CSV** from the sidebar to replace
-   `data/projections.csv` automatically. The loader uses ESPN's public
-   fantasy-player feed for projected points and Sleeper's public catalogue
-   for player-team metadata. If ESPN provides only a season total, it is
-   evenly allocated over Weeks 1–17 so draft values remain usable; it is not
-   presented as a week-specific forecast. Alternatively, export projections
+   `data/projections.csv` automatically. Enter your ESPN league ID so the
+   loader uses that league's scoring rules and the player-card endpoint. Its
+   period-zero `appliedTotal` is treated as a season projection and divided
+   evenly among your configured fantasy weeks, excluding a bye when ESPN
+   supplies one. It is not presented as a week-specific forecast. Alternatively, export projections
    from FantasyPros, ESPN, or Yahoo with at minimum these columns:
    `player_name, team, position, week, projected_points`. Optional columns
    `bye_week` and `adp` are used if present.

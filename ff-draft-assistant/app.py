@@ -55,9 +55,22 @@ projections_path = st.sidebar.text_input("Projections CSV path", value="data/pro
 espn_season = st.sidebar.number_input(
     "ESPN season", min_value=2019, max_value=2100, value=date.today().year, step=1
 )
+espn_league_id = st.sidebar.text_input("ESPN league ID", value="2077647142")
+espn_swid = st.sidebar.text_input(
+    "ESPN SWID (private league)", type="password", help="Optional; leave blank for public leagues."
+)
+espn_s2 = st.sidebar.text_input(
+    "ESPN S2 cookie (private league)", type="password", help="Optional; leave blank for public leagues."
+)
+projection_weeks = range(
+    1, (st.session_state.config.season_weeks if "config" in st.session_state else 17) + 1
+)
 if st.sidebar.button("Fetch ESPN projections into CSV"):
     try:
-        count = ESPNProjectionSource(season=int(espn_season)).write_csv(projections_path)
+        count = ESPNProjectionSource(
+            season=int(espn_season), league_id=espn_league_id, weeks=projection_weeks,
+            swid=espn_swid or None, espn_s2=espn_s2 or None,
+        ).write_csv(projections_path)
         st.session_state.all_players = CSVProjectionSource(projections_path).load()
         st.session_state.pop("draft_state", None)
         st.sidebar.success(f"Wrote {count} ESPN players to {projections_path}.")
@@ -74,7 +87,12 @@ if st.sidebar.button("Load / refresh projections"):
     try:
         if use_live_source:
             source = APIProjectionSource(
-                fallback_csv_path=projections_path, season=int(espn_season)
+                fallback_csv_path=projections_path,
+                season=int(espn_season),
+                league_id=espn_league_id,
+                weeks=projection_weeks,
+                swid=espn_swid or None,
+                espn_s2=espn_s2 or None,
             )
         else:
             source = CSVProjectionSource(projections_path)

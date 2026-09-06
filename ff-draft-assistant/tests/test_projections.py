@@ -51,7 +51,10 @@ class ESPNProjectionSourceTests(unittest.TestCase):
         players = ESPNProjectionSource(2026, weeks=[1, 2], session=session).load()
 
         self.assertEqual(len(players), 1)
-        self.assertIn("/seasons/2026/segments/0/leaguedefaults/3?scoringPeriodId=0&view=kona_player_info", session.url)
+        self.assertIn("/seasons/2026/segments/0/leagues/2077647142", session.url)
+        self.assertEqual(session.kwargs["params"]["scoringPeriodId"], 0)
+        self.assertEqual(session.kwargs["params"]["view"], "kona_playercard")
+        self.assertIn("platformVersion", session.kwargs["params"])
         filter_payload = session.kwargs["headers"]["x-fantasy-filter"]
         self.assertIn("sortDraftRanks", filter_payload)
 
@@ -61,7 +64,7 @@ class ESPNProjectionSourceTests(unittest.TestCase):
             [
                 {
                     "player": {"fullName": "Jane QB", "defaultPositionId": 1},
-                    "stats": [{"statSourceId": 1, "scoringPeriodId": 1, "appliedTotal": 21.5}],
+                    "stats": [{"statSourceId": 1, "scoringPeriodId": 0, "appliedTotal": 21.5}],
                 }
             ]
         )
@@ -73,7 +76,7 @@ class ESPNProjectionSourceTests(unittest.TestCase):
         source = ESPNProjectionSource(season=2026)
         self.assertEqual(source._parse_players(["invalid", {"player": []}]), [])
 
-    def test_uses_weekly_projected_stats_when_available(self):
+    def test_ignores_weekly_stats_and_uses_the_season_total(self):
         source = ESPNProjectionSource(season=2026, weeks=[1, 2])
         players = source._parse_players(
             {
@@ -81,6 +84,7 @@ class ESPNProjectionSourceTests(unittest.TestCase):
                     {
                         "player": {"fullName": "Jane QB", "defaultPositionId": 1, "proTeamAbbrev": "DAL"},
                         "stats": [
+                            {"statSourceId": 1, "scoringPeriodId": 0, "appliedTotal": 40.0},
                             {"statSourceId": 1, "scoringPeriodId": 1, "appliedTotal": 21.5},
                             {"statSourceId": 1, "scoringPeriodId": 2, "appliedTotal": 19.0},
                         ],
@@ -88,7 +92,7 @@ class ESPNProjectionSourceTests(unittest.TestCase):
                 ]
             }
         )
-        self.assertEqual(players[0].weekly_projections, {1: 21.5, 2: 19.0})
+        self.assertEqual(players[0].weekly_projections, {1: 20.0, 2: 20.0})
         self.assertEqual(players[0].nfl_team, "DAL")
 
     def test_writes_season_total_as_standard_csv(self):
@@ -107,6 +111,49 @@ class ESPNProjectionSourceTests(unittest.TestCase):
             rows = path.read_text().splitlines()
         self.assertEqual(len(rows), 4)
         self.assertIn("Jane RB,NYJ,RB,1,10.0", rows[1])
+
+    def test_splits_season_total_only_across_non_bye_weeks(self):
+        source = ESPNProjectionSource(season=2026, weeks=[1, 2, 3, 4])
+        players = source._parse_players(
+            {
+                "players": [
+                    {
+                        "player": {
+                            "fullName": "Jane WR",
+                            "defaultPositionId": 3,
+                            "byeWeek": 3,
+                            "stats": [
+                                {"statSourceId": 1, "scoringPeriodId": 0, "appliedTotal": 60},
+                                {"statSourceId": 1, "scoringPeriodId": 1, "appliedTotal": 99},
+                            ],
+                        }
+                    }
+                ]
+            }
+        )
+        self.assertEqual(players[0].bye_week, 3)
+        self.assertEqual(players[0].weekly_projections, {1: 20.0, 2: 20.0, 3: 0.0, 4: 20.0})
+        self.assertEqual(players[0].season_total(), 60.0)
+
+    def test_uses_pro_team_schedule_bye_when_player_card_has_none(self):
+        source = ESPNProjectionSource(season=2026, weeks=[1, 2, 3])
+        players = source._parse_players(
+            {
+                "players": [
+                    {
+                        "player": {
+                            "fullName": "Jane Punter",
+                            "defaultPositionId": 18,
+                            "proTeamId": 12,
+                            "stats": [{"statSourceId": 1, "scoringPeriodId": 0, "appliedTotal": 18}],
+                        }
+                    }
+                ]
+            },
+            bye_by_team={12: 2},
+        )
+        self.assertEqual(players[0].position, "P")
+        self.assertEqual(players[0].weekly_projections, {1: 9.0, 2: 0.0, 3: 9.0})
 
 
 if __name__ == "__main__":
