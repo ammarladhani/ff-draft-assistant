@@ -17,6 +17,7 @@ Workflow:
 from __future__ import annotations
 
 import os
+from datetime import date
 
 import pandas as pd
 import streamlit as st
@@ -25,7 +26,7 @@ from src.config import ConfigError, load_config
 from src.draft_engine import autocomplete_draft, recommend_picks, weighted_vor_rankings
 from src.draft_state import DraftState
 from src.lineup import optimal_lineup
-from src.projections import CSVProjectionSource, APIProjectionSource
+from src.projections import CSVProjectionSource, ESPNProjectionSource, APIProjectionSource
 from src.simulator import simulate_season
 
 st.set_page_config(page_title="Fantasy Draft Assistant", layout="wide")
@@ -51,16 +52,30 @@ if st.sidebar.button("Load config"):
 st.sidebar.divider()
 
 projections_path = st.sidebar.text_input("Projections CSV path", value="data/projections.csv")
+espn_season = st.sidebar.number_input(
+    "ESPN season", min_value=2019, max_value=2100, value=date.today().year, step=1
+)
+if st.sidebar.button("Fetch ESPN projections into CSV"):
+    try:
+        count = ESPNProjectionSource(season=int(espn_season)).write_csv(projections_path)
+        st.session_state.all_players = CSVProjectionSource(projections_path).load()
+        st.session_state.pop("draft_state", None)
+        st.sidebar.success(f"Wrote {count} ESPN players to {projections_path}.")
+    except Exception as e:  # noqa: BLE001 -- external API failures belong in the UI
+        st.sidebar.error(f"Could not fetch ESPN projections: {e}")
+
 use_live_source = st.sidebar.checkbox(
     "Try live API source first (falls back to CSV)",
     value=False,
-    help="Attempts Sleeper/FantasyPros first; the CSV above is always the fallback and the "
-    "recommended default, since free weekly projection data isn't reliably available live.",
+    help="Uses ESPN projections and enriches player teams from Sleeper. The CSV above is "
+    "always the fallback; use the ESPN button to save a refreshable local copy.",
 )
 if st.sidebar.button("Load / refresh projections"):
     try:
         if use_live_source:
-            source = APIProjectionSource(fallback_csv_path=projections_path)
+            source = APIProjectionSource(
+                fallback_csv_path=projections_path, season=int(espn_season)
+            )
         else:
             source = CSVProjectionSource(projections_path)
         players = source.load()
