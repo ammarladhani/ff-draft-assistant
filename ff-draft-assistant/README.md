@@ -27,8 +27,9 @@ The app is immediately demoable with the sample data — no real projections nee
    `P`, `DT`, `DE`, `LB`, `CB`, `S`, and `BENCH`. For example, an IDP
    league can use `{QB: 1, RB: 2, WR: 2, TE: 1, FLEX: 1, DT: 1, DE: 1,
    LB: 1, CB: 1, S: 1, K: 1, P: 1, BENCH: 7}`; its draft must have 21
-   rounds. Supply IDP and punter projections in your CSV using those same
-   position codes.
+   rounds. The **Fetch ESPN projections into CSV** action requests these IDP
+   and punter positions too; alternatively, supply them in an imported CSV
+   using those same position codes.
 2. **Fetch ESPN projections into CSV** from the sidebar to replace
    `data/projections.csv` automatically. Enter your ESPN league ID so the
    loader uses that league's scoring rules and the player-card endpoint. Its

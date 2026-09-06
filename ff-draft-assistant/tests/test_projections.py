@@ -1,8 +1,9 @@
+import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from src.projections import ESPNProjectionSource
+from src.projections import ESPN_FILTER_SLOT_IDS, ESPNProjectionSource
 
 
 class FakeResponse:
@@ -57,6 +58,33 @@ class ESPNProjectionSourceTests(unittest.TestCase):
         self.assertIn("platformVersion", session.kwargs["params"])
         filter_payload = session.kwargs["headers"]["x-fantasy-filter"]
         self.assertIn("sortDraftRanks", filter_payload)
+        self.assertEqual(
+            json.loads(filter_payload)["players"]["filterSlotIds"]["value"],
+            list(ESPN_FILTER_SLOT_IDS),
+        )
+
+    def test_parses_idp_and_punter_positions(self):
+        source = ESPNProjectionSource(season=2026, weeks=[1])
+        players = source._parse_players(
+            {
+                "players": [
+                    {
+                        "player": {"fullName": position, "defaultPositionId": position_id},
+                        "stats": [{"statSourceId": 1, "scoringPeriodId": 1, "appliedTotal": 10}],
+                    }
+                    for position_id, position in {
+                        8: "DT",
+                        9: "DE",
+                        10: "LB",
+                        12: "CB",
+                        13: "S",
+                        18: "P",
+                    }.items()
+                ]
+            }
+        )
+
+        self.assertEqual({player.position for player in players}, {"DT", "DE", "LB", "CB", "S", "P"})
 
     def test_parses_list_shaped_response(self):
         source = ESPNProjectionSource(season=2026, weeks=[1])

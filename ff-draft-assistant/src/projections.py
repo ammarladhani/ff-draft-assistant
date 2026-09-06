@@ -45,11 +45,25 @@ ESPN_PRO_TEAM_SCHEDULES_URL = (
     "seasons/{season}"
 )
 CACHE_MAX_AGE_SECONDS = 60 * 60  # 1 hour -- plenty fresh for a single draft night
+# ESPN's player ``defaultPositionId`` values use the same identifiers as the
+# corresponding roster slots for IDP, defense/special teams, and kickers.
+# ``filterSlotIds`` below uses roster-slot IDs (QB is slot 0, while its player
+# default position is 1), so keep the two concepts separate.
 ESPN_POSITION_IDS = {
-    1: "QB", 2: "RB", 3: "WR", 4: "TE", 5: "K",
-    8: "DT", 9: "DE", 10: "LB", 11: "DT", 12: "CB", 13: "S",
-    14: "DB", 15: "DP", 16: "DST", 17: "K", 18: "P",
+    1: "QB",
+    2: "RB",
+    3: "WR",
+    4: "TE",
+    8: "DT",
+    9: "DE",
+    10: "LB",
+    12: "CB",
+    13: "S",
+    16: "DST",
+    17: "K",
+    18: "P",
 }
+ESPN_FILTER_SLOT_IDS = (0, 2, 4, 6, 8, 9, 10, 12, 13, 16, 17, 18)
 
 
 @dataclass
@@ -202,72 +216,33 @@ class ESPNProjectionSource(ProjectionSource):
         import requests
 
         client = self._session or requests
-        bye_by_team = self._load_bye_weeks(client)
-        entries = []
-        # ESPN caps one response at 2,000 players. Punters are commonly
-        # ranked below that first page, so continue until a short page.
-        for offset in range(0, 8000, 2000):
-            response = client.get(
-                ESPN_PLAYERS_URL.format(season=self.season, league_id=self.league_id),
-                timeout=20,
-                params={
-                    "scoringPeriodId": 0,
-                    "view": ESPN_PLAYER_CARD_VIEW,
-                    **({"platformVersion": self.platform_version} if self.platform_version else {}),
-                },
-                cookies=self._auth_cookies(),
-                headers={"User-Agent": "FantasyDraftAssistant/1.0", "x-fantasy-filter": self._player_filter(offset)},
-            )
-            response.raise_for_status()
-            page = response.json().get("players", [])
-            if not isinstance(page, list):
-                break
-            entries.extend(page)
-            if len(page) < 2000:
-                break
-        return self._parse_players({"players": entries}, bye_by_team=bye_by_team)
-
-    @staticmethod
-    def _player_filter(offset: int) -> str:
-        return json.dumps(
-            {
-                "players": {
-                    "filterSlotIds": {"value": list(range(26))},
-                    "limit": 2000,
-                    "offset": offset,
-                    "sortDraftRanks": {"sortPriority": 2, "sortAsc": True, "value": "PPR"},
-                    "sortPercOwned": {"sortPriority": 4, "sortAsc": False},
-                }
-            }
+        response = client.get(
+            ESPN_PLAYERS_URL.format(season=self.season),
+            timeout=20,
+            headers={
+                "User-Agent": "FantasyDraftAssistant/1.0",
+                # ESPN otherwise returns only a small, popularity-sorted
+                # page. ``leaguedefaults/3`` is ESPN's public PPR scoring
+                # configuration and does not require league credentials.
+                "x-fantasy-filter": json.dumps(
+                    {
+                        "players": {
+                            "filterSlotIds": {"value": [0, 2, 4, 6, 16, 17]},
+                            "limit": 2000,
+                            "offset": 0,
+                            "sortDraftRanks": {
+                                "sortPriority": 2,
+                                "sortAsc": True,
+                                "value": "PPR",
+                            },
+                            "sortPercOwned": {"sortPriority": 4, "sortAsc": False},
+                        }
+                    }
+                ),
+            },
         )
-
-    def _load_bye_weeks(self, client) -> Dict[int, int]:
-        """Return ESPN pro-team ID -> bye week; a failed lookup is non-fatal."""
-        try:
-            response = client.get(
-                ESPN_PRO_TEAM_SCHEDULES_URL.format(season=self.season),
-                timeout=20,
-                params={"view": "proTeamSchedules_wl"},
-                cookies=self._auth_cookies(),
-                headers={"User-Agent": "FantasyDraftAssistant/1.0"},
-            )
-            response.raise_for_status()
-            teams = response.json().get("settings", {}).get("proTeams", [])
-            return {
-                int(team["id"]): int(team["byeWeek"])
-                for team in teams
-                if isinstance(team, dict) and team.get("id") is not None and team.get("byeWeek") is not None
-            }
-        except Exception:  # ESPN's player data remains useful without the bye metadata.
-            return {}
-
-    def _auth_cookies(self) -> Dict[str, str]:
-        """Build ESPN cookies for private leagues; empty is valid for public ones."""
-        return {
-            key: value
-            for key, value in (("SWID", self.swid), ("espn_s2", self.espn_s2))
-            if value
-        }
+        response.raise_for_status()
+        return self._parse_players(response.json())
 
     def write_csv(self, csv_path: str) -> int:
         """Fetch, validate, and replace ``csv_path`` with standard CSV rows."""
