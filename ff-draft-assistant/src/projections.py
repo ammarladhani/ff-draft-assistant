@@ -36,7 +36,7 @@ import pandas as pd
 SLEEPER_PLAYERS_URL = "https://api.sleeper.app/v1/players/nfl"
 ESPN_PLAYERS_URL = (
     "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/"
-    "seasons/{season}/players?scoringPeriodId=0&view=players_wl"
+    "seasons/{season}/segments/0/leagues/0?view=kona_player_info"
 )
 CACHE_MAX_AGE_SECONDS = 60 * 60  # 1 hour -- plenty fresh for a single draft night
 ESPN_POSITION_IDS = {1: "QB", 2: "RB", 3: "WR", 4: "TE", 16: "DST", 17: "K"}
@@ -181,8 +181,20 @@ class ESPNProjectionSource(ProjectionSource):
             timeout=20,
             headers={
                 "User-Agent": "FantasyDraftAssistant/1.0",
-                # ESPN otherwise returns only a small, popularity-sorted page.
-                "x-fantasy-filter": json.dumps({"players": {"limit": 2000}}),
+                # ``kona_player_info`` supplies projected stat totals. The
+                # public league (0) has no roster, so free agents/waivers are
+                # the draftable player pool. ESPN otherwise returns only a
+                # small, popularity-sorted page.
+                "x-fantasy-filter": json.dumps(
+                    {
+                        "players": {
+                            "filterStatus": {"value": ["FREEAGENT", "WAIVERS"]},
+                            "filterSlotIds": {"value": [0, 2, 4, 6, 16, 17]},
+                            "limit": 2000,
+                            "offset": 0,
+                        }
+                    }
+                ),
             },
         )
         response.raise_for_status()

@@ -24,7 +24,32 @@ class FakeSession:
         return FakeResponse(self.payload)
 
 
+class RecordingSession(FakeSession):
+    def get(self, url, **kwargs):
+        self.url = url
+        self.kwargs = kwargs
+        return super().get(url, **kwargs)
+
+
 class ESPNProjectionSourceTests(unittest.TestCase):
+    def test_load_uses_public_league_projection_view(self):
+        session = RecordingSession(
+            {
+                "players": [
+                    {
+                        "player": {"fullName": "Jane QB", "defaultPositionId": 1},
+                        "stats": [{"statSourceId": 1, "scoringPeriodId": 0, "appliedTotal": 170}],
+                    }
+                ]
+            }
+        )
+        players = ESPNProjectionSource(2026, weeks=[1, 2], session=session).load()
+
+        self.assertEqual(len(players), 1)
+        self.assertIn("/seasons/2026/segments/0/leagues/0?view=kona_player_info", session.url)
+        filter_payload = session.kwargs["headers"]["x-fantasy-filter"]
+        self.assertIn("FREEAGENT", filter_payload)
+
     def test_parses_list_shaped_response(self):
         source = ESPNProjectionSource(season=2026, weeks=[1])
         players = source._parse_players(
