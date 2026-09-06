@@ -8,12 +8,14 @@ Two sources are provided behind a common ProjectionSource interface:
   aren't reliably available from a free, keyless API, so the CSV is treated
   as the source of truth and the API source is best-effort/supplementary.
 
-- APIProjectionSource: pulls player metadata (name/position/team/bye) from
-  Sleeper's free public API, attempts to enrich with FantasyPros consensus
-  rankings, and falls back to a CSVProjectionSource if either step fails
-  for any reason (network error, HTML layout change, rate limiting, etc).
-  This is intentionally defensive: draft day is the worst time for an
-  unhandled exception.
+- ESPNProjectionSource: turns ESPN's public fantasy player projections into
+  the CSV shape the application uses.  ESPN's projection payload is season
+  total in some years and weekly in others; season totals are split across
+  the selected regular-season weeks when weekly values are unavailable.
+
+- APIProjectionSource: a backwards-compatible live-source wrapper. It uses
+  ESPN for points, then optionally enriches matching players with Sleeper's
+  free player catalogue. It falls back to CSV if ESPN is unavailable.
 
 All fetched/derived projections are cached to data/projections_cache.json
 so refreshing the Streamlit app during a live draft doesn't repeatedly
@@ -32,7 +34,12 @@ from typing import Dict, List, Optional
 import pandas as pd
 
 SLEEPER_PLAYERS_URL = "https://api.sleeper.app/v1/players/nfl"
+ESPN_PLAYERS_URL = (
+    "https://lm-api-reads.fantasy.espn.com/apis/v3/games/ffl/"
+    "seasons/{season}/players?scoringPeriodId=0&view=players_wl"
+)
 CACHE_MAX_AGE_SECONDS = 60 * 60  # 1 hour -- plenty fresh for a single draft night
+ESPN_POSITION_IDS = {1: "QB", 2: "RB", 3: "WR", 4: "TE", 16: "DST", 17: "K"}
 
 
 @dataclass
@@ -151,29 +158,140 @@ class CSVProjectionSource(ProjectionSource):
         return result
 
 
+class ESPNProjectionSource(ProjectionSource):
+    """Load ESPN fantasy projections and optionally write them as our CSV.
+
+    ESPN exposes player projections without credentials, but does not promise
+    a stable schema. Keeping its parsing here (rather than in the Streamlit
+    view) makes failures explicit and leaves the existing CSV workflow intact.
+    ``session`` is injectable so parsing can be tested without network access.
+    """
+
+    def __init__(self, season: int, weeks=range(1, 18), session=None):
+        self.season = season
+        self.weeks = list(weeks)
+        self._session = session
+
+    def load(self) -> List[Player]:
+        import requests
+
+        client = self._session or requests
+        response = client.get(
+            ESPN_PLAYERS_URL.format(season=self.season),
+            timeout=20,
+            headers={
+                "User-Agent": "FantasyDraftAssistant/1.0",
+                # ESPN otherwise returns only a small, popularity-sorted page.
+                "x-fantasy-filter": json.dumps({"players": {"limit": 2000}}),
+            },
+        )
+        response.raise_for_status()
+        return self._parse_players(response.json())
+
+    def write_csv(self, csv_path: str) -> int:
+        """Fetch, validate, and replace ``csv_path`` with standard CSV rows."""
+        players = self.load()
+        if not players:
+            raise RuntimeError("ESPN returned no draftable players with projections.")
+        rows = []
+        for player in players:
+            for week, points in sorted(player.weekly_projections.items()):
+                rows.append(
+                    {
+                        "player_name": player.name,
+                        "team": player.nfl_team,
+                        "position": player.position,
+                        "week": week,
+                        "projected_points": round(points, 2),
+                        "bye_week": player.bye_week,
+                        "adp": player.adp,
+                    }
+                )
+        os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)
+        pd.DataFrame(rows).to_csv(csv_path, index=False)
+        return len(players)
+
+    def _parse_players(self, payload: dict) -> List[Player]:
+        entries = payload.get("players", [])
+        result = []
+        for entry in entries:
+            meta = entry.get("player", entry)
+            position = ESPN_POSITION_IDS.get(meta.get("defaultPositionId"))
+            name = meta.get("fullName") or meta.get("name")
+            if not name or not position:
+                continue
+            weekly = self._weekly_points(entry)
+            if not weekly:
+                continue
+            result.append(
+                Player(
+                    name=name.strip(),
+                    position=position,
+                    nfl_team=str(meta.get("proTeamAbbrev") or meta.get("proTeamId") or "FA"),
+                    bye_week=None,
+                    weekly_projections=weekly,
+                    adp=self._adp(entry),
+                )
+            )
+        return result
+
+    def _weekly_points(self, entry: dict) -> Dict[int, float]:
+        # A statSourceId of 1 is ESPN's projected-stat feed. Prefer genuine
+        # weekly projections when they are included in the response.
+        weekly = {}
+        season_total = None
+        for stat in entry.get("stats", []):
+            if stat.get("statSourceId") not in (None, 1):
+                continue
+            value = stat.get("appliedTotal", stat.get("projectedTotal"))
+            if value is None:
+                continue
+            period = int(stat.get("scoringPeriodId", 0))
+            if period in self.weeks:
+                weekly[int(period)] = float(value)
+            elif period == 0:
+                season_total = float(value)
+        if weekly:
+            return weekly
+        if season_total is None or not self.weeks:
+            return {}
+        # ESPN commonly supplies a season total only before Week 1. Uniform
+        # allocation is transparent, useful for draft comparison, and avoids
+        # inventing a false week-by-week signal.
+        points = season_total / len(self.weeks)
+        return {week: points for week in self.weeks}
+
+    @staticmethod
+    def _adp(entry: dict) -> Optional[float]:
+        for key in ("draftRanksByRankType", "ratings"):
+            ratings = entry.get(key, {})
+            if isinstance(ratings, dict):
+                for rating in ratings.values():
+                    if isinstance(rating, dict) and rating.get("rank") is not None:
+                        return float(rating["rank"])
+        return None
+
+
 class APIProjectionSource(ProjectionSource):
     """
-    Best-effort live source. Tries to:
-      1. Pull player metadata (name, position, team, bye week is NOT
-         reliably in Sleeper's payload, so bye weeks may come back None).
-      2. Supplement with FantasyPros public rankings pages (best-effort
-         scrape -- FantasyPros does not offer a free projections API, and
-         their HTML structure can change without notice, so this step is
-         wrapped in a broad try/except).
+    Best-effort live source. Uses ESPN's public fantasy player feed for
+    projections, then Sleeper's player catalogue for current NFL team data.
 
-    If EITHER step fails for any reason, we fall back to the provided
-    CSVProjectionSource rather than raising -- a stale or manually
-    exported CSV beats a crashed draft tool.
+    If ESPN fails for any reason, we fall back to the provided
+    CSVProjectionSource rather than raising -- a stale or manually exported
+    CSV beats a crashed draft tool. Sleeper enrichment is optional.
     """
 
     def __init__(
         self,
         fallback_csv_path: str,
         cache_path: str = "data/projections_cache.json",
+        season: Optional[int] = None,
         session=None,
     ):
         self.fallback = CSVProjectionSource(fallback_csv_path)
         self.cache_path = cache_path
+        self.season = season or time.gmtime().tm_year
         # `session` is injectable for testing; defaults to the `requests`
         # library's module-level functions via a tiny shim below.
         self._session = session
@@ -197,71 +315,35 @@ class APIProjectionSource(ProjectionSource):
     # -- internals -----------------------------------------------------
 
     def _fetch_live(self) -> List[Player]:
-        import requests
+        players = ESPNProjectionSource(
+            season=self.season, session=self._session
+        ).load()
+        if not players:
+            raise RuntimeError("ESPN returned no usable fantasy projections.")
 
-        resp = requests.get(SLEEPER_PLAYERS_URL, timeout=15)
-        resp.raise_for_status()
-        raw = resp.json()
-
-        players = []
-        for _, meta in raw.items():
-            if meta.get("position") not in ("QB", "RB", "WR", "TE", "DST", "K"):
-                continue
-            name = meta.get("full_name") or f"{meta.get('first_name', '')} {meta.get('last_name', '')}".strip()
-            if not name:
-                continue
-            players.append(
-                Player(
-                    name=name,
-                    position=meta["position"],
-                    nfl_team=(meta.get("team") or "FA"),
-                    bye_week=None,  # Sleeper's free endpoint does not expose this reliably.
-                    weekly_projections={},  # Filled in by _enrich_with_fantasypros below.
-                    adp=None,
-                )
-            )
-
-        self._enrich_with_fantasypros(players)
-
-        # Without real weekly projections, this source is not usable on its
-        # own -- surface that to the caller so it falls back to CSV instead
-        # of silently returning an all-zero recommendation engine.
-        if not any(p.weekly_projections for p in players):
-            raise RuntimeError(
-                "Sleeper metadata fetched, but no weekly projection data could "
-                "be attached (FantasyPros enrichment unavailable). "
-                "A CSV export is required for real point projections."
-            )
+        # Sleeper is metadata only: it cannot supply future weekly fantasy
+        # points. A failed enrichment is non-fatal because ESPN already gave
+        # us a complete set of projections.
+        try:
+            self._enrich_with_sleeper(players)
+        except Exception as exc:  # noqa: BLE001 -- metadata is optional
+            print(f"[projections] Sleeper metadata fetch failed ({exc!r}).")
         return players
 
-    def _enrich_with_fantasypros(self, players: List[Player]) -> None:
-        """
-        Best-effort scrape of FantasyPros' public consensus rankings.
+    def _enrich_with_sleeper(self, players: List[Player]) -> None:
+        import requests
 
-        This is deliberately conservative: FantasyPros' page structure is
-        not a stable, documented API, so any parsing failure here is
-        swallowed and simply results in players with no weekly_projections
-        (which triggers the CSV fallback in _fetch_live above). Treat this
-        as a "nice to have" enrichment step, never a load-bearing one.
-        """
-        try:
-            import requests
-
-            resp = requests.get(
-                "https://www.fantasypros.com/nfl/rankings/consensus-cheatsheets.php",
-                timeout=15,
-                headers={"User-Agent": "Mozilla/5.0"},
-            )
-            resp.raise_for_status()
-            # Real parsing would go here (e.g. with pandas.read_html or an
-            # HTML parser targeting FantasyPros' ranking table). Intentionally
-            # not implemented against a moving-target HTML page in this
-            # starter project -- wire this up if/when you pin down their
-            # current markup, or just rely on the CSV path, which is the
-            # recommended default anyway.
-            return
-        except Exception:
-            return
+        client = self._session or requests
+        resp = client.get(SLEEPER_PLAYERS_URL, timeout=15)
+        resp.raise_for_status()
+        raw = resp.json()
+        sleeper_by_name = {
+            (meta.get("full_name") or "").casefold(): meta for meta in raw.values()
+        }
+        for player in players:
+            meta = sleeper_by_name.get(player.name.casefold())
+            if meta and meta.get("team"):
+                player.nfl_team = meta["team"]
 
     def _load_cache_if_fresh(self) -> Optional[List[Player]]:
         if not os.path.exists(self.cache_path):

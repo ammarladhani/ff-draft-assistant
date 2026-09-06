@@ -24,10 +24,15 @@ The app is immediately demoable with the sample data — no real projections nee
    (missing fields, roster/bench math that doesn't add up, unknown team
    names in the schedule, etc.) and reports every problem it finds at
    once.
-2. **Export projections to CSV** from FantasyPros, ESPN, or Yahoo with
-   at minimum these columns: `player_name, team, position, week, projected_points`.
-   Optional columns `bye_week` and `adp` are used if present. Drop it in
-   `data/projections.csv` (or point the sidebar at wherever you saved it).
+2. **Fetch ESPN projections into CSV** from the sidebar to replace
+   `data/projections.csv` automatically. The loader uses ESPN's public
+   fantasy-player feed for projected points and Sleeper's public catalogue
+   for player-team metadata. If ESPN provides only a season total, it is
+   evenly allocated over Weeks 1–17 so draft values remain usable; it is not
+   presented as a week-specific forecast. Alternatively, export projections
+   from FantasyPros, ESPN, or Yahoo with at minimum these columns:
+   `player_name, team, position, week, projected_points`. Optional columns
+   `bye_week` and `adp` are used if present.
 3. Run the draft — as each pick happens (yours or an opponent's), select
    the player and hit **Draft**. The snake order advances automatically.
 
@@ -68,12 +73,10 @@ for the fully-commented implementation):
   curb it, the easiest lever is a hard per-position bench cap in
   `draft_engine.need_multiplier` (not implemented, to avoid overbuilding
   past what was asked for).
-- **FantasyPros enrichment in `APIProjectionSource` is a stub.** FantasyPros
-  doesn't offer a free, stable projections API, so `_enrich_with_fantasypros`
-  fetches the page but doesn't parse it (their HTML markup isn't a
-  contract and changes without notice). The CSV path is the recommended
-  and fully-implemented source; the API path exists for player metadata
-  and gracefully falls back to your CSV for actual point projections.
+- **Live provider schemas can change.** `ESPNProjectionSource` validates the
+  public ESPN fantasy response before replacing your CSV; if the live load
+  fails, `APIProjectionSource` leaves the local CSV as the fallback. Sleeper
+  provides player metadata, not future fantasy point projections.
 - **`playoff_weeks` is tracked but not weighted.** Standings tally every
   week equally; `playoff_points_for` is broken out per team in case you
   want to use it as a tiebreaker or add weighting later.
