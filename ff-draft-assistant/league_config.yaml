@@ -7,12 +7,12 @@ teams:
 - {name: Mafia, draft_slot: 4, is_me: false}
 - {name: Alizeh, draft_slot: 6, is_me: false}
 - {name: Justin, draft_slot: 11, is_me: false}
-- {name: Srajat, draft_slot: 3, is_me: false}
+- {name: Srajat, draft_slot: 1, is_me: false}
 - {name: Josh, draft_slot: 10, is_me: false}
 - {name: Tampa, draft_slot: 12, is_me: false}
 - {name: Flint, draft_slot: 8, is_me: false}
 - {name: Adrian, draft_slot: 2, is_me: false}
-- {name: Ammar, draft_slot: 1, is_me: true}
+- {name: Ammar, draft_slot: 3, is_me: true}
 - {name: Jonathin, draft_slot: 7, is_me: false}
 - {name: Touchdown, draft_slot: 5, is_me: false}
 - {name: He, draft_slot: 9, is_me: false}

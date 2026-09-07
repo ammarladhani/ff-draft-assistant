@@ -45,15 +45,24 @@ ESPN_PRO_TEAM_SCHEDULES_URL = (
     "seasons/{season}"
 )
 CACHE_MAX_AGE_SECONDS = 60 * 60  # 1 hour -- plenty fresh for a single draft night
-# ESPN's player ``defaultPositionId`` values use the same identifiers as the
-# corresponding roster slots for IDP, defense/special teams, and kickers.
-# ``filterSlotIds`` below uses roster-slot IDs (QB is slot 0, while its player
-# default position is 1), so keep the two concepts separate.
-ESPN_POSITION_IDS = {
-    1: "QB",
+
+# Roster-slot IDs, NOT `defaultPositionId`. A player's `eligibleSlots` list is
+# the authoritative source for their position on this endpoint --
+# `defaultPositionId` does NOT reliably line up with these same numbers.
+# Confirmed via live kona_playercard payloads:
+#   - Jeffery Simmons (a real DT) reports defaultPositionId=9,
+#     eligibleSlots includes 8.
+#   - Myles Garrett (a real DE) reports defaultPositionId=10,
+#     eligibleSlots includes 9.
+# i.e. defaultPositionId is shifted relative to the roster-slot numbering
+# and cannot be used directly as a position lookup key for IDP/K/P. Do not
+# reintroduce a defaultPositionId -> position map without re-verifying
+# against a live payload first.
+ROSTER_SLOT_TO_POSITION = {
+    0: "QB",
     2: "RB",
-    3: "WR",
-    4: "TE",
+    4: "WR",
+    6: "TE",
     8: "DT",
     9: "DE",
     10: "LB",
@@ -64,6 +73,25 @@ ESPN_POSITION_IDS = {
     18: "P",
 }
 ESPN_FILTER_SLOT_IDS = (0, 2, 4, 6, 8, 9, 10, 12, 13, 16, 17, 18)
+
+
+def _position_from_slots(meta: dict, fallback_entry: Optional[dict] = None) -> Optional[str]:
+    """Resolve a player's fantasy position from `eligibleSlots`.
+
+    Checked against both the nested `player` object and the raw entry,
+    since ESPN has put `eligibleSlots` in slightly different places across
+    response shapes. Returns the first roster slot in the list that maps to
+    a known position -- a player can be slot-eligible for a handful of
+    utility/flex slots too, but those aren't in `ROSTER_SLOT_TO_POSITION`.
+    """
+    for container in (meta, fallback_entry or {}):
+        if not isinstance(container, dict):
+            continue
+        for slot in container.get("eligibleSlots", []) or []:
+            position = ROSTER_SLOT_TO_POSITION.get(slot)
+            if position:
+                return position
+    return None
 
 
 @dataclass
@@ -216,9 +244,19 @@ class ESPNProjectionSource(ProjectionSource):
         import requests
 
         client = self._session or requests
+
+        # Properly defined cookies dictionary
+        cookies = {}
+        if self.swid:
+            cookies["swid"] = self.swid
+        if self.espn_s2:
+            cookies["espn_s2"] = self.espn_s2
+
         response = client.get(
-            ESPN_PLAYERS_URL.format(season=self.season),
+            ESPN_PLAYERS_URL.format(season=self.season, league_id=self.league_id),
             timeout=20,
+            params={"view": ESPN_PLAYER_CARD_VIEW},
+            cookies=cookies if cookies else None,
             headers={
                 "User-Agent": "FantasyDraftAssistant/1.0",
                 # ESPN otherwise returns only a small, popularity-sorted
@@ -227,7 +265,8 @@ class ESPNProjectionSource(ProjectionSource):
                 "x-fantasy-filter": json.dumps(
                     {
                         "players": {
-                            "filterSlotIds": {"value": [0, 2, 4, 6, 16, 17]},
+                            # Fixed: Use the module-level constant to ensure slot 18 (P) is included
+                            "filterSlotIds": {"value": list(ESPN_FILTER_SLOT_IDS)},
                             "limit": 2000,
                             "offset": 0,
                             "sortDraftRanks": {
@@ -293,7 +332,7 @@ class ESPNProjectionSource(ProjectionSource):
             meta = entry.get("player", entry)
             if not isinstance(meta, dict):
                 continue
-            position = ESPN_POSITION_IDS.get(meta.get("defaultPositionId"))
+            position = _position_from_slots(meta, fallback_entry=entry)
             name = meta.get("fullName") or meta.get("name")
             if not name or not position:
                 continue

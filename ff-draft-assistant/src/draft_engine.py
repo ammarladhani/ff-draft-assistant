@@ -19,18 +19,21 @@ Three layered steps, per pick:
 
   Step C - Simulated win impact ("the real magic"):
       For the handful of top candidates from Step B, actually fast-
-      forward a full mock draft (my remaining picks via best-VOR-
-      available, everyone else via best-ADP-available), run a full
-      season simulation on the resulting complete league, and see how
-      many games *I* win. This is the most expensive step, so it's only
+      forward a full mock draft (my remaining picks via best-weighted-VOR-
+      available, everyone else ALSO via best-weighted-VOR-available given
+      their own roster so far), run a full season simulation on the
+      resulting complete league, and see how many games *I* win and how
+      many points I score. This is the most expensive step, so it's only
       run on a short list of realistic candidates, not every available
       player.
 
 IMPORTANT CAVEAT (surfaced in the UI, not just here): Step C's opponent
-model is a simplifying assumption. Real opponents don't draft by ADP
-alone -- they have their own needs, sleepers, and biases. Treat the
-resulting win totals as *directional* signal for comparing the top
-candidates against each other, not as a gospel prediction of the season.
+model is a simplifying assumption. Every other team is modeled as drafting
+purely to maximize its own weighted VOR, the same greedy logic used for
+my_team -- real opponents also chase sleepers, stack picks, react to runs,
+and generally aren't perfectly value-maximizing. Treat the resulting win
+and point totals as *directional* signal for comparing the top candidates
+against each other, not as a gospel prediction of the season.
 """
 
 from __future__ import annotations
@@ -184,21 +187,29 @@ def weighted_vor_rankings(
 # Step C: Simulated win impact
 # ---------------------------------------------------------------------------
 
-def _best_adp_pick(available: Dict[str, Player]) -> Player:
-    """Simplest reasonable opponent model: everyone else drafts best-ADP-
-    available. Missing ADP sorts last (never reached ahead of ranked players).
+def _best_weighted_vor_pick(
+    available: Dict[str, Player],
+    team_roster: List[Player],
+    roster_config: RosterConfig,
+    num_teams: int,
+) -> Player:
+    """Opponent model: every team (not just my_team) drafts best-weighted-
+    VOR-available given ITS OWN roster and needs so far -- i.e. every team
+    is assumed to be maximizing its own projected score, the same greedy
+    logic used for my_team, rather than following ADP.
     """
-    return min(available.values(), key=lambda p: p.adp if p.adp is not None else float("inf"))
+    ranked = weighted_vor_rankings(list(available.values()), team_roster, roster_config, num_teams)
+    return ranked[0].player
 
 
 def autocomplete_draft(
     state: DraftState, my_team: str, roster_config: RosterConfig, num_teams: int
 ) -> None:
     """
-    Mutates `state` in place, playing out every remaining pick:
-      - my_team picks best-weighted-VOR-available given its roster so far.
-      - every other team picks best-ADP-available (a simplifying stand-in
-        for "reasonable but not omniscient" opponents -- see module docstring).
+    Mutates `state` in place, playing out every remaining pick. Every team,
+    including my_team, picks best-weighted-VOR-available given its own
+    roster so far -- i.e. every team is modeled as trying to maximize its
+    own score (see module docstring caveat).
 
     Public (not prefixed with _) because the Streamlit app also uses this
     directly to preview projected final standings from the current draft
@@ -206,13 +217,7 @@ def autocomplete_draft(
     """
     while not state.is_complete():
         team = state.current_team()
-        if team == my_team:
-            ranked = weighted_vor_rankings(
-                list(state.available.values()), state.rosters[my_team], roster_config, num_teams
-            )
-            pick = ranked[0].player
-        else:
-            pick = _best_adp_pick(state.available)
+        pick = _best_weighted_vor_pick(state.available, state.rosters[team], roster_config, num_teams)
         state.make_pick(pick.name, team=team)
 
 
@@ -290,7 +295,6 @@ def recommend_picks(
             }
         )
 
-    # Recommend by simulated win total; break ties with raw projected points,
-    # per the spec ("Break ties with total projected points").
-    results.sort(key=lambda r: (-r["simulated_wins"], -r["season_points"]))
+    # Recommend by simulated points scored; break ties with simulated wins.
+    results.sort(key=lambda r: (-r["simulated_points_for"], -r["simulated_wins"]))
     return results

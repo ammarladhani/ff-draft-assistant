@@ -11,7 +11,8 @@ Workflow:
      "Draft this player" -- the snake order advances automatically.
   4. When it's your turn, the recommendation panel at the top shows your
      best options, weighted by value-over-replacement, your roster needs,
-     and simulated season win impact.
+     and simulated season points scored (wins shown as a tiebreak/secondary
+     signal).
 """
 
 from __future__ import annotations
@@ -177,13 +178,12 @@ if not state.is_complete() and state.current_team() == my_team:
         with col:
             st.metric(
                 label=f"{rec['name']} ({rec['position']})",
-                value=f"{rec['simulated_wins']:.1f} proj. wins",
-                delta=f"VOR {rec['vor']:+.1f} · weight {rec['need_weight']}x",
+                value=f"{rec['simulated_points_for']:.1f} proj. pts",
+                delta=f"{rec['simulated_wins']:.1f} proj. wins · VOR {rec['vor']:+.1f} · weight {rec['need_weight']}x",
             )
             st.caption(
                 f"Weighted VOR {rec['weighted_vor']:+.1f} · "
-                f"Season pts {rec['season_points']} · "
-                f"Sim. PF {rec['simulated_points_for']}"
+                f"Season pts {rec['season_points']}"
             )
             if st.button(f"Draft {rec['name']}", key=f"draft_rec_{rec['name']}"):
                 try:
@@ -196,9 +196,9 @@ if not state.is_complete() and state.current_team() == my_team:
         st.dataframe(pd.DataFrame(recs), use_container_width=True, hide_index=True)
 
     st.caption(
-        "⚠️ Simulated win impact is directional, not gospel: your remaining picks are "
-        "auto-completed using best-value-available, but every other team is modeled as "
-        "drafting by ADP alone -- a simplification, not real opponent intelligence."
+        "⚠️ Simulated points/win impact is directional, not gospel: your remaining picks are "
+        "auto-completed using best-value-available, and every other team is modeled the same "
+        "way -- drafting to maximize its own weighted VOR -- rather than real opponent intelligence."
     )
     st.divider()
 
@@ -323,7 +323,8 @@ with tab_roster:
 with tab_standings:
     st.caption(
         "Projected final standings if the draft finished from here: your remaining picks "
-        "use best-value-available, every other team is modeled on ADP. Updates live as picks happen."
+        "use best-weighted-VOR-available, and every other team is modeled the same way. "
+        "Updates live as picks happen."
     )
     if st.button("Compute projected final standings"):
         preview_state = state.clone()
