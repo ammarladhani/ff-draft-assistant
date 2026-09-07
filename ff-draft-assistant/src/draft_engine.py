@@ -17,15 +17,33 @@ Three layered steps, per pick:
       now, given my roster so far. An empty starter slot is worth more
       than topping up a position I've already started and benched.
 
-  Step C - Simulated win impact ("the real magic"):
-      For the handful of top candidates from Step B, actually fast-
-      forward a full mock draft (my remaining picks via best-weighted-VOR-
-      available, everyone else ALSO via best-weighted-VOR-available given
-      their own roster so far), run a full season simulation on the
-      resulting complete league, and see how many games *I* win and how
-      many points I score. This is the most expensive step, so it's only
-      run on a short list of realistic candidates, not every available
-      player.
+      Two refinements on top of the basic need check:
+        - The boost/penalty strength scales with how far into the draft
+          we are (`draft_progress`, 0.0-1.0). Early in the draft almost
+          every position looks "open" simply because the roster is
+          nearly empty, so need is a weak signal there; it gets more
+          weight as the draft goes on, reaching the full-strength
+          constants once the draft is complete.
+        - A bye-week collision penalty discounts a candidate who would
+          leave a position without enough non-bye players to fill its
+          dedicated starter slots during a shared bye week.
+
+  Step C - Simulated win/points impact ("the real magic"):
+      For a shortlist of promising candidates, actually fast-forward a
+      full mock draft (my remaining picks via best-weighted-VOR-available,
+      everyone else ALSO via best-weighted-VOR-available given their own
+      roster so far), run a full season simulation on the resulting
+      complete league, and see how many points I score and how many
+      games I win. This is the most expensive step, so it's only run on
+      a shortlist of realistic candidates, not every available player.
+
+      The shortlist is the union of the top candidates by weighted VOR
+      AND the top candidates by raw projected season points. Step B's
+      need weighting is a useful prior, but it isn't the thing we're
+      actually optimizing for -- gating Step C's candidate pool solely by
+      Step B's output could silently exclude a player who'd turn out to
+      be the best simulated-points pick simply because he scored lower on
+      a need heuristic that Step C doesn't otherwise use.
 
 IMPORTANT CAVEAT (surfaced in the UI, not just here): Step C's opponent
 model is a simplifying assumption. Every other team is modeled as drafting
@@ -47,11 +65,26 @@ from .projections import Player
 from .simulator import simulate_season
 
 # Step B tuning constants -- named so the "magic numbers" have obvious meaning.
+# These are the FULL-STRENGTH values, applied once draft_progress reaches 1.0
+# (see _stage_scaled). Early in the draft they're blended toward neutral.
 NEED_BOOST_OPEN_STARTER = 1.3
+NEED_BOOST_OPEN_STARTER_EARLY = 1.0  # neutral: "need" isn't a useful signal yet
 NEED_PENALTY_FILLED_WITH_BENCH_ROOM = 0.5
+NEED_PENALTY_FILLED_WITH_BENCH_ROOM_EARLY = 1.0  # neutral, same reasoning
 NEED_ZERO_FILLED_AND_BENCH_FULL = 0.0
 NEED_ELITE_OVERRIDE = 1.0  # applied instead of 0.0 for a top-3-overall value even when full
 ELITE_OVERALL_RANK_CUTOFF = 3
+
+# A bye-week collision doesn't make a player unroster-able, just less
+# attractive than the raw need multiplier alone would suggest.
+BYE_COLLISION_PENALTY = 0.7
+
+
+def _stage_scaled(early_value: float, late_value: float, draft_progress: float) -> float:
+    """Linearly blend from `early_value` (draft_progress=0.0) to
+    `late_value` (draft_progress=1.0)."""
+    draft_progress = max(0.0, min(1.0, draft_progress))
+    return early_value + (late_value - early_value) * draft_progress
 
 
 # ---------------------------------------------------------------------------
@@ -125,13 +158,49 @@ def _bench_is_full(my_roster: List[Player], roster_config: RosterConfig) -> bool
     return bench_used >= roster_config.bench
 
 
+def _bye_collision_penalty(
+    candidate: Player, my_roster: List[Player], roster_config: RosterConfig
+) -> float:
+    """
+    Discount a candidate whose bye week would leave a position without
+    enough non-bye players to cover its dedicated starter slots.
+
+    This is a soft, draft-time heuristic on dedicated slots only -- it
+    does NOT model FLEX coverage from other positions (that real,
+    week-by-week lineup feasibility check already lives in
+    lineup.optimal_lineup). A candidate isn't excluded here, just made
+    relatively less attractive when it would create a real bye-week hole.
+    """
+    pos = candidate.position
+    dedicated_slots = roster_config.starters.get(pos, 0)
+    if dedicated_slots == 0 or candidate.bye_week is None:
+        return 1.0
+
+    same_pos_after_pick = [p for p in my_roster if p.position == pos] + [candidate]
+    sharing_bye = [p for p in same_pos_after_pick if p.bye_week == candidate.bye_week]
+    healthy_that_week = len(same_pos_after_pick) - len(sharing_bye)
+
+    if healthy_that_week < dedicated_slots:
+        return BYE_COLLISION_PENALTY
+    return 1.0
+
+
 def need_multiplier(
     candidate: Player,
     my_roster: List[Player],
     roster_config: RosterConfig,
     is_elite_overall: bool,
+    draft_progress: float = 1.0,
 ) -> float:
-    """See module docstring, Step B. Returns the multiplier to apply to VOR."""
+    """See module docstring, Step B. Returns the multiplier to apply to VOR.
+
+    `draft_progress` (0.0 = draft hasn't started, 1.0 = draft complete)
+    scales the open-starter boost and the filled-with-bench-room penalty
+    toward neutral early in the draft, since "need" isn't a meaningful
+    signal when almost nothing has been drafted yet. `draft_progress`
+    defaults to 1.0 (full-strength, matching the original fixed-constant
+    behavior) so existing callers that don't pass it are unaffected.
+    """
     pos = candidate.position
     dedicated_slots = roster_config.starters.get(pos, 0)
     have_at_pos = sum(1 for p in my_roster if p.position == pos)
@@ -139,12 +208,16 @@ def need_multiplier(
     flex_open = pos in FLEX_ELIGIBLE and _flex_slots_open(my_roster, roster_config) > 0
 
     if dedicated_open or flex_open:
-        return NEED_BOOST_OPEN_STARTER
+        base = _stage_scaled(NEED_BOOST_OPEN_STARTER_EARLY, NEED_BOOST_OPEN_STARTER, draft_progress)
+    elif _bench_is_full(my_roster, roster_config):
+        # Hard roster-space constraint, not a soft preference -- not stage-scaled.
+        base = NEED_ELITE_OVERRIDE if is_elite_overall else NEED_ZERO_FILLED_AND_BENCH_FULL
+    else:
+        base = _stage_scaled(
+            NEED_PENALTY_FILLED_WITH_BENCH_ROOM_EARLY, NEED_PENALTY_FILLED_WITH_BENCH_ROOM, draft_progress
+        )
 
-    # Starters at this position are fully spoken for.
-    if _bench_is_full(my_roster, roster_config):
-        return NEED_ELITE_OVERRIDE if is_elite_overall else NEED_ZERO_FILLED_AND_BENCH_FULL
-    return NEED_PENALTY_FILLED_WITH_BENCH_ROOM
+    return base * _bye_collision_penalty(candidate, my_roster, roster_config)
 
 
 @dataclass
@@ -160,6 +233,7 @@ def weighted_vor_rankings(
     my_roster: List[Player],
     roster_config: RosterConfig,
     num_teams: int,
+    draft_progress: float = 1.0,
 ) -> List[RankedCandidate]:
     """Step A + Step B combined, sorted best-first by weighted VOR."""
     replacement_levels = compute_replacement_levels(available, roster_config, num_teams)
@@ -177,14 +251,14 @@ def weighted_vor_rankings(
     ranked = []
     for p in available:
         vor = vor_by_name[p.name]
-        weight = need_multiplier(p, my_roster, roster_config, p.name in elite_names)
+        weight = need_multiplier(p, my_roster, roster_config, p.name in elite_names, draft_progress)
         ranked.append(RankedCandidate(player=p, vor=vor, need_weight=weight, weighted_vor=vor * weight))
     ranked.sort(key=lambda rc: rc.weighted_vor, reverse=True)
     return ranked
 
 
 # ---------------------------------------------------------------------------
-# Step C: Simulated win impact
+# Step C: Simulated win/points impact
 # ---------------------------------------------------------------------------
 
 def _best_weighted_vor_pick(
@@ -192,13 +266,16 @@ def _best_weighted_vor_pick(
     team_roster: List[Player],
     roster_config: RosterConfig,
     num_teams: int,
+    draft_progress: float,
 ) -> Player:
     """Opponent model: every team (not just my_team) drafts best-weighted-
     VOR-available given ITS OWN roster and needs so far -- i.e. every team
     is assumed to be maximizing its own projected score, the same greedy
     logic used for my_team, rather than following ADP.
     """
-    ranked = weighted_vor_rankings(list(available.values()), team_roster, roster_config, num_teams)
+    ranked = weighted_vor_rankings(
+        list(available.values()), team_roster, roster_config, num_teams, draft_progress
+    )
     return ranked[0].player
 
 
@@ -217,7 +294,10 @@ def autocomplete_draft(
     """
     while not state.is_complete():
         team = state.current_team()
-        pick = _best_weighted_vor_pick(state.available, state.rosters[team], roster_config, num_teams)
+        progress = state.draft_progress()
+        pick = _best_weighted_vor_pick(
+            state.available, state.rosters[team], roster_config, num_teams, progress
+        )
         state.make_pick(pick.name, team=team)
 
 
@@ -262,20 +342,31 @@ def recommend_picks(
     for use on my_team's turn). Returns a list of dicts, best pick first,
     each with:
         name, position, season_points, vor, need_weight, weighted_vor,
-        simulated_wins (None if this candidate wasn't in the deep-sim
-        shortlist), simulated_points_for.
+        simulated_wins, simulated_points_for.
 
-    Only the top `deep_sim_count` candidates by weighted VOR get the
-    expensive Step C simulation (clamped to 5-8 per the design spec) --
-    running it on the full available pool would be far too slow to stay
-    "usable live, during a draft".
+    The Step C shortlist is the union of the top `deep_sim_count`
+    candidates by weighted VOR and the top `deep_sim_count` candidates by
+    raw projected season points (deduplicated) -- so a player Step B's
+    need-weighting would otherwise bury still gets simulated if he's a
+    top raw-points option. This means the shortlist can run up to
+    2x `deep_sim_count` candidates rather than exactly `deep_sim_count`;
+    still far short of the full available pool, which would be too slow
+    to stay usable live, during a draft.
     """
     deep_sim_count = max(5, min(8, deep_sim_count))
     available = list(state.available.values())
     my_roster = state.rosters[my_team]
+    draft_progress = state.draft_progress()
 
-    ranked = weighted_vor_rankings(available, my_roster, roster_config, num_teams)
-    shortlist = ranked[:deep_sim_count]
+    ranked = weighted_vor_rankings(available, my_roster, roster_config, num_teams, draft_progress)
+
+    vor_shortlist = ranked[:deep_sim_count]
+    points_shortlist = sorted(ranked, key=lambda rc: rc.player.season_total(), reverse=True)[:deep_sim_count]
+
+    shortlist_by_name: Dict[str, RankedCandidate] = {}
+    for rc in vor_shortlist + points_shortlist:
+        shortlist_by_name.setdefault(rc.player.name, rc)
+    shortlist = list(shortlist_by_name.values())
 
     results = []
     for rc in shortlist:

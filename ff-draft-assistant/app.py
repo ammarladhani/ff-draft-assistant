@@ -12,7 +12,8 @@ Workflow:
   4. When it's your turn, the recommendation panel at the top shows your
      best options, weighted by value-over-replacement, your roster needs,
      and simulated season points scored (wins shown as a tiebreak/secondary
-     signal).
+     signal). In the sidebar, you can add other teams (e.g. your
+     girlfriend's) to get the same live panel when it's their turn too.
 """
 
 from __future__ import annotations
@@ -106,6 +107,21 @@ if st.sidebar.button("Load / refresh projections"):
 
 st.sidebar.divider()
 
+if "config" in st.session_state:
+    _my_team_name = st.session_state.config.my_team().name
+    _other_team_names = [t.name for t in st.session_state.config.teams if t.name != _my_team_name]
+    assist_teams_extra = st.sidebar.multiselect(
+        "Also get live recommendations for",
+        options=_other_team_names,
+        key="assist_teams",
+        help="Pick any other team in the draft (e.g. your girlfriend's) to get the same "
+        "recommendation panel and need-weighted player table when it's their turn on the clock.",
+    )
+else:
+    assist_teams_extra = []
+
+st.sidebar.divider()
+
 if "config" in st.session_state and "all_players" in st.session_state:
     if st.sidebar.button("Start / Reset Draft", type="primary"):
         st.session_state.draft_state = DraftState(
@@ -135,6 +151,7 @@ state: DraftState = st.session_state.draft_state
 roster_config = config.roster
 my_team = config.my_team().name
 num_teams = config.num_teams
+assisted_teams = {my_team} | set(assist_teams_extra)
 
 # --- Pick indicator ---------------------------------------------------
 
@@ -144,10 +161,15 @@ with top_l:
         st.success("Draft complete!")
     else:
         on_clock = state.current_team()
-        you_flag = "  🔵 **(You)**" if on_clock == my_team else ""
+        if on_clock == my_team:
+            flag = "  🔵 **(You)**"
+        elif on_clock in assisted_teams:
+            flag = "  🟣 **(Assisted)**"
+        else:
+            flag = ""
         st.subheader(
             f"Round {state.current_round()} · Pick {state.overall_pick_number()} "
-            f"— **{on_clock}** on the clock{you_flag}"
+            f"— **{on_clock}** on the clock{flag}"
         )
 with top_r:
     if st.button("↩️ Undo last pick") and state.pick_history:
@@ -158,17 +180,19 @@ with top_r:
 
 st.divider()
 
-# --- Recommendation panel (only meaningful on my turn) -----------------
+# --- Recommendation panel (fires for whichever assisted team is on the clock) --
 
-if not state.is_complete() and state.current_team() == my_team:
-    st.markdown("### 🎯 Recommended picks")
+on_clock = None if state.is_complete() else state.current_team()
+if on_clock is not None and on_clock in assisted_teams:
+    panel_owner_label = "You" if on_clock == my_team else on_clock
+    st.markdown(f"### 🎯 Recommended picks — {panel_owner_label}")
     with st.spinner("Simulating outcomes for top candidates..."):
         recs = recommend_picks(
             state=state,
             roster_config=roster_config,
             schedule=config.schedule,
             num_teams=num_teams,
-            my_team=my_team,
+            my_team=on_clock,
             playoff_weeks=config.playoff_weeks,
         )
 
@@ -185,7 +209,7 @@ if not state.is_complete() and state.current_team() == my_team:
                 f"Weighted VOR {rec['weighted_vor']:+.1f} · "
                 f"Season pts {rec['season_points']}"
             )
-            if st.button(f"Draft {rec['name']}", key=f"draft_rec_{rec['name']}"):
+            if st.button(f"Draft {rec['name']}", key=f"draft_rec_{on_clock}_{rec['name']}"):
                 try:
                     state.make_pick(rec["name"])
                     st.rerun()
@@ -196,9 +220,9 @@ if not state.is_complete() and state.current_team() == my_team:
         st.dataframe(pd.DataFrame(recs), use_container_width=True, hide_index=True)
 
     st.caption(
-        "⚠️ Simulated points/win impact is directional, not gospel: your remaining picks are "
-        "auto-completed using best-value-available, and every other team is modeled the same "
-        "way -- drafting to maximize its own weighted VOR -- rather than real opponent intelligence."
+        f"⚠️ Simulated points/win impact is directional, not gospel: {panel_owner_label}'s remaining "
+        "picks are auto-completed using best-value-available, and every other team is modeled the "
+        "same way -- drafting to maximize its own weighted VOR -- rather than real opponent intelligence."
     )
     st.divider()
 
@@ -218,8 +242,14 @@ with f2:
 with f3:
     sort_by = st.selectbox("Sort by", ["ADP", "Weighted VOR", "Season Points"], key="sort_by")
 
+perspective_team = on_clock if (on_clock is not None and on_clock in assisted_teams) else my_team
+if perspective_team != my_team:
+    st.caption(f"VOR and need-weighting below reflect **{perspective_team}**'s roster.")
+
 available_players = list(state.available.values())
-ranked = weighted_vor_rankings(available_players, state.rosters[my_team], roster_config, num_teams)
+ranked = weighted_vor_rankings(
+    available_players, state.rosters[perspective_team], roster_config, num_teams, state.draft_progress()
+)
 vor_by_name = {rc.player.name: rc for rc in ranked}
 
 rows = []
@@ -287,10 +317,17 @@ st.divider()
 
 # --- My roster / lineup / standings tabs --------------------------------
 
-tab_roster, tab_standings = st.tabs(["My Roster & Lineup", "League Standings"])
+tab_roster, tab_standings = st.tabs(["Roster & Lineup", "League Standings"])
 
 with tab_roster:
-    my_roster = state.rosters[my_team]
+    roster_team_options = sorted(assisted_teams)
+    roster_team = st.selectbox(
+        "Team",
+        roster_team_options,
+        index=roster_team_options.index(my_team) if my_team in roster_team_options else 0,
+        key="roster_team_select",
+    )
+    my_roster = state.rosters[roster_team]
     if not my_roster:
         st.write("No players drafted yet.")
     else:

@@ -75,6 +75,17 @@ class DraftState:
         num_teams = len(self.team_names)
         return (self._current_round - 1) * num_teams + self._current_pick_in_round + 1
 
+    def draft_progress(self) -> float:
+        """Fraction of the draft completed so far, 0.0 (no picks made) to
+        1.0 (draft complete). Used to scale need-based weighting so that
+        "positional need" matters less when almost nothing has been
+        drafted yet and more as rosters fill in -- see draft_engine.py.
+        """
+        total_picks = len(self.team_names) * self.config.draft_rounds
+        if total_picks == 0:
+            return 1.0
+        return len(self.pick_history) / total_picks
+
     # -- mutating the draft ----------------------------------------------
 
     def make_pick(self, player_name: str, team: Optional[str] = None) -> None:
